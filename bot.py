@@ -1,210 +1,212 @@
 import os
 import logging
-import asyncio
 import random
-from datetime import datetime, time
+from datetime import time
 import httpx
-from telegram import Update, BotCommand
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler,
-    filters, ContextTypes, JobQueue
-)
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 BOT_TOKEN = "8584463479:AAFur-O99NibvM6qvn7P6dITV5XGt_rgVVs"
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-subscribers: set = set()
+subscribers = set()
 
-SAMPLE_FIXTURES = [
-    {"home": "Bayern Munich", "away": "Eintracht Frankfurt", "league": "Bundesliga", "date": "Today"},
-    {"home": "Barcelona", "away": "Levante", "league": "La Liga", "date": "Today"},
-    {"home": "Chelsea", "away": "Burnley", "league": "EPL", "date": "Today"},
-    {"home": "PSG", "away": "Metz", "league": "Ligue 1", "date": "Today"},
-    {"home": "Inter Milan", "away": "Lecce", "league": "Serie A", "date": "Today"},
-    {"home": "Tottenham", "away": "Arsenal", "league": "EPL", "date": "Tomorrow"},
-    {"home": "Real Madrid", "away": "Osasuna", "league": "La Liga", "date": "Tomorrow"},
-    {"home": "AC Milan", "away": "Parma", "league": "Serie A", "date": "Tomorrow"},
-    {"home": "RB Leipzig", "away": "Dortmund", "league": "Bundesliga", "date": "Tomorrow"},
-    {"home": "Atletico Madrid", "away": "Club Brugge", "league": "UCL", "date": "Tomorrow"},
-    {"home": "Newcastle", "away": "Qarabag", "league": "UCL", "date": "Tomorrow"},
-    {"home": "Juventus", "away": "Galatasaray", "league": "UCL", "date": "This Week"},
-    {"home": "Atalanta", "away": "Napoli", "league": "Serie A", "date": "This Week"},
-    {"home": "LAFC", "away": "Inter Miami", "league": "MLS", "date": "This Week"},
-    {"home": "Man City", "away": "Newcastle", "league": "EPL", "date": "This Week"},
+FIXTURES = [
+    {"home": "Bayern Munich", "away": "Eintracht Frankfurt", "league": "Bundesliga"},
+    {"home": "Barcelona", "away": "Levante", "league": "La Liga"},
+    {"home": "Chelsea", "away": "Burnley", "league": "EPL"},
+    {"home": "PSG", "away": "Metz", "league": "Ligue 1"},
+    {"home": "Inter Milan", "away": "Lecce", "league": "Serie A"},
+    {"home": "Tottenham", "away": "Arsenal", "league": "EPL"},
+    {"home": "Real Madrid", "away": "Osasuna", "league": "La Liga"},
+    {"home": "AC Milan", "away": "Parma", "league": "Serie A"},
+    {"home": "RB Leipzig", "away": "Dortmund", "league": "Bundesliga"},
+    {"home": "Atletico Madrid", "away": "Club Brugge", "league": "UCL"},
 ]
 
-def predict_match(home, away):
+def predict(home, away):
     seed = sum(ord(c) for c in home + away)
     rng = random.Random(seed)
-    home_win = rng.randint(35, 75)
-    draw = rng.randint(15, 30)
-    away_win = 100 - home_win - draw
-    if away_win < 5:
-        away_win = 5
-        home_win = 100 - draw - away_win
+    hw = rng.randint(35, 75)
+    dr = rng.randint(15, 25)
+    aw = 100 - hw - dr
+    if aw < 5:
+        aw = 5
+        hw = 100 - dr - aw
+    if hw > aw and hw > dr:
+        result = f"🏠 {home} Win"
+    elif aw > hw and aw > dr:
+        result = f"✈️ {away} Win"
+    else:
+        result = "🤝 Draw"
     return {
-        "result": f"🏠 {home} Win" if home_win > away_win and home_win > draw else (f"✈️ {away} Win" if away_win > home_win else "🤝 Draw"),
-        "confidence": "High" if max(home_win, away_win) > 60 else "Medium",
-        "home_win": home_win, "draw": draw, "away_win": away_win,
-        "over_15": rng.randint(72, 97),
-        "over_25": rng.randint(50, 82),
-        "over_35": rng.randint(28, 55),
+        "result": result,
+        "hw": hw, "dr": dr, "aw": aw,
+        "o15": rng.randint(72, 97),
+        "o25": rng.randint(50, 82),
+        "o35": rng.randint(28, 55),
         "btts": rng.randint(45, 78),
-        "home_scores": rng.randint(55, 85),
-        "away_scores": rng.randint(40, 72),
-        "cs_home": rng.randint(20, 45),
-        "cs_away": rng.randint(12, 35),
-        "ht_over": rng.randint(38, 68),
+        "cs_h": rng.randint(20, 45),
+        "cs_a": rng.randint(12, 35),
+        "h_score": rng.randint(55, 85),
+        "a_score": rng.randint(40, 72),
     }
 
-def format_prediction(home, away, league, pred):
-    return f"""
-⚽ *{home} vs {away}*
-🏆 _{league}_
-━━━━━━━━━━━━━━━━━━━━
-📊 *MATCH RESULT*
-🏠 {home}: {pred['home_win']}%
-🤝 Draw: {pred['draw']}%
-✈️ {away}: {pred['away_win']}%
-🎯 Prediction: *{pred['result']}* ({pred['confidence']} confidence)
-━━━━━━━━━━━━━━━━━━━━
-🔢 *GOALS MARKETS*
-Over 1.5 goals: *{pred['over_15']}%*
-Over 2.5 goals: *{pred['over_25']}%*
-Over 3.5 goals: *{pred['over_35']}%*
-Half-Time O0.5: *{pred['ht_over']}%*
-━━━━━━━━━━━━━━━━━━━━
-⚡ *BOTH TEAMS TO SCORE*
-BTTS Yes: *{pred['btts']}%*
-BTTS No: *{100 - pred['btts']}%*
-━━━━━━━━━━━━━━━━━━━━
-🧹 *CLEAN SHEETS*
-{home} CS: {pred['cs_home']}%
-{away} CS: {pred['cs_away']}%
-━━━━━━━━━━━━━━━━━━━━
-🎯 *TEAM TO SCORE*
-{home} to score: {pred['home_scores']}%
-{away} to score: {pred['away_scores']}%
-━━━━━━━━━━━━━━━━━━━━
-⚠️ _For entertainment only. Bet responsibly._
-"""
-
-def get_top_picks(market="over_15", n=5):
-def get_top_picks(market="over_15", n=5):
-    results = []
-    for f in SAMPLE_FIXTURES[:n]:
-        pred = predict_match(f["home"], f["away"])
-        pct = pred[market]
-        results.append(f"⚽ *{f['home']} vs {f['away']}* - {pct}%\n🏆 {f['league']} | {pred['result']}")
-    
-    labels = {"over_15": "Over 1.5 Goals", "over_25": "Over 2.5 Goals", "over_35": "Over 3.5 Goals", "btts": "BTTS"}
-    label = labels.get(market, market)
-    msg = f"🔥 *Top {n} {label} Picks*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-    msg += "\n\n".join(results)
-    msg += "\n\n⚠️ _Bet responsibly. 18+ only._"
+def picks_msg(market, label, n=5):
+    data = []
+    for f in FIXTURES:
+        p = predict(f["home"], f["away"])
+        data.append((p[market], f, p))
+    data.sort(reverse=True)
+    msg = f"🔥 *Top {label} Picks*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+    for i, (pct, f, p) in enumerate(data[:n], 1):
+        msg += f"{i}. *{f['home']} vs {f['away']}*\n"
+        msg += f"   🏆 {f['league']} | {label}: *{pct}%*\n"
+        msg += f"   🎯 {p['result']}\n\n"
+    msg += "⚠️ _Bet responsibly. 18+ only._"
     return msg
 
-async def ask_claude(question):
-    if not ANTHROPIC_API_KEY:
-        return "🤖 AI chat unavailable. Use /picks, /predict, /today or /help!"
-    headers = {"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"}
-    payload = {
-        "model": "claude-sonnet-4-20250514", "max_tokens": 600,
-        "system": "You are Sporty Predictor, an expert soccer betting analyst bot on Telegram. Help users with match predictions, betting markets (over/under, BTTS, match result, Asian handicap, corners, cards), team form, and betting strategy. Be concise, use emojis, always remind users to bet responsibly.",
-        "messages": [{"role": "user", "content": question}],
-    }
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers)
-            return r.json()["content"][0]["text"]
-    except Exception as e:
-        return "⚠️ AI is taking a break. Try /picks or /predict!"
-
-async def start(update, ctx):
+async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     name = update.effective_user.first_name
-    await update.message.reply_text(f"👋 Welcome *{name}*! I'm *Sporty Predictor Bot* ⚽\n\n📋 *Commands:*\n/today — Today's picks\n/picks — Over 1.5 picks\n/over25 — Over 2.5 picks\n/over35 — Over 3.5 picks\n/btts — BTTS picks\n/predict TeamA vs TeamB\n/leagues — Covered leagues\n/subscribe — Daily picks\n/help — All commands\n\n💬 Or just ask me anything!\n\n⚠️ _Bet responsibly. 18+ only._", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"👋 Welcome *{name}*! I'm *Sporty Predictor Bot* ⚽\n\n"
+        "📋 *Commands:*\n"
+        "/today — Today's picks\n"
+        "/picks — Over 1.5 picks\n"
+        "/over25 — Over 2.5 picks\n"
+        "/over35 — Over 3.5 picks\n"
+        "/btts — BTTS picks\n"
+        "/predict TeamA vs TeamB\n"
+        "/subscribe — Daily picks\n"
+        "/help — All commands\n\n"
+        "⚠️ _Bet responsibly. 18+ only._",
+        parse_mode="Markdown"
+    )
 
-async def help_cmd(update, ctx):
-    await update.message.reply_text("📋 *Commands*\n\n/today — Today's picks\n/picks — Over 1.5\n/over25 — Over 2.5\n/over35 — Over 3.5\n/btts — Both Teams Score\n/predict TeamA vs TeamB\n/leagues — Supported leagues\n/subscribe — Daily 8AM picks\n/unsubscribe — Stop picks\n\n💬 Or type any question naturally!", parse_mode="Markdown")
+async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "📋 *All Commands*\n\n"
+        "/today /picks /over25 /over35 /btts\n"
+        "/predict TeamA vs TeamB\n"
+        "/subscribe /unsubscribe\n\n"
+        "💬 Or type any question!",
+        parse_mode="Markdown"
+    )
 
-async def today_picks(update, ctx):
-    await update.message.reply_text("⏳ Analyzing fixtures...")
-    today = [f for f in SAMPLE_FIXTURES if f["date"] == "Today"] or SAMPLE_FIXTURES[:4]
-    msg = "📅 *TODAY'S PREDICTIONS*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-    for f in today:
-        pred = predict_match(f["home"], f["away"])
-        msg += f"⚽ *{f['home']} vs {f['away']}*\n🏆 {f['league']}\n🎯 {pred['result']}\n📈 O1.5: *{pred['over_15']}%* | O2.5: *{pred['over_25']}%*\n⚡ BTTS: *{pred['btts']}%*\n\n"
+async def today_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    msg = "📅 *TODAY'S PICKS*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+    for f in FIXTURES[:5]:
+        p = predict(f["home"], f["away"])
+        msg += f"⚽ *{f['home']} vs {f['away']}*\n"
+        msg += f"🏆 {f['league']}\n"
+        msg += f"🎯 {p['result']}\n"
+        msg += f"Over 1.5: *{p['o15']}%* | BTTS: *{p['btts']}%*\n\n"
     msg += "⚠️ _Bet responsibly. 18+ only._"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-async def picks_over15(update, ctx):
-    await update.message.reply_text("⏳ Getting picks...")
-    await update.message.reply_text(get_top_picks("over_15", 6), parse_mode="Markdown")
-async def picks_over25(update, ctx):
-    await update.message.reply_text("⏳ Getting picks...")
-    await update.message.reply_text(get_top_picks("over_25", 6), parse_mode="Markdown")
+async def picks_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(picks_msg("o15", "Over 1.5 Goals"), parse_mode="Markdown")
 
-async def picks_over35(update, ctx):
-    await update.message.reply_text("⏳ Getting picks...")
-    await update.message.reply_text(get_top_picks("over_35", 6), parse_mode="Markdown")
+async def over25_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(picks_msg("o25", "Over 2.5 Goals"), parse_mode="Markdown")
 
-async def picks_btts(update, ctx):
-    await update.message.reply_text("⏳ Getting picks...")
-    await update.message.reply_text(get_top_picks("btts", 6), parse_mode="Markdown")
+async def over35_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(picks_msg("o35", "Over 3.5 Goals"), parse_mode="Markdown")
 
-async def predict_cmd(update, ctx):
+async def btts_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(picks_msg("btts", "BTTS"), parse_mode="Markdown")
+
+async def predict_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.replace("/predict", "").strip()
     if " vs " not in text.lower():
-        await update.message.reply_text("📝 Usage: `/predict TeamA vs TeamB`\nExample: `/predict Liverpool vs Arsenal`", parse_mode="Markdown")
+        await update.message.reply_text("📝 Usage: `/predict TeamA vs TeamB`", parse_mode="Markdown")
         return
-    parts = text.lower().split(" vs ")
-    home, away = parts[0].strip().title(), parts[1].strip().title()
-    league = next((f["league"] for f in SAMPLE_FIXTURES if f["home"].lower() in home.lower()), "International")
-    await update.message.reply_text("🔮 Generating prediction...")
-    pred = predict_match(home, away)
-    await update.message.reply_text(format_prediction(home, away, league, pred), parse_mode="Markdown")
+    parts = text.split(" vs ")
+    home = parts[0].strip().title()
+    away = parts[1].strip().title()
+    league = next((f["league"] for f in FIXTURES if f["home"].lower() in home.lower()), "International")
+    p = predict(home, away)
+    msg = (
+        f"⚽ *{home} vs {away}*\n"
+        f"🏆 _{league}_\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 *MATCH RESULT*\n"
+        f"🏠 {home}: {p['hw']}%\n"
+        f"🤝 Draw: {p['dr']}%\n"
+        f"✈️ {away}: {p['aw']}%\n"
+        f"🎯 Prediction: *{p['result']}*\n\n"
+        f"🔢 *GOALS*\n"
+        f"Over 1.5: *{p['o15']}%*\n"
+        f"Over 2.5: *{p['o25']}%*\n"
+        f"Over 3.5: *{p['o35']}%*\n\n"
+        f"⚡ *BTTS*\n"
+        f"Yes: *{p['btts']}%* | No: *{100-p['btts']}%*\n\n"
+        f"🧹 *CLEAN SHEETS*\n"
+        f"{home}: {p['cs_h']}% | {away}: {p['cs_a']}%\n\n"
+        f"⚠️ _Bet responsibly. 18+ only._"
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
-async def leagues_cmd(update, ctx):
-    await update.message.reply_text("🌍 *Supported Leagues*\n\n🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier League\n🇪🇸 La Liga\n🇩🇪 Bundesliga\n🇮🇹 Serie A\n🇫🇷 Ligue 1\n🇵🇹 Primeira Liga\n🇳🇱 Eredivisie\n🇺🇸 MLS\n⭐ Champions League\n🏆 Europa League", parse_mode="Markdown")
-
-async def subscribe_cmd(update, ctx):
+async def subscribe_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     subscribers.add(update.effective_chat.id)
-    await update.message.reply_text("✅ *Subscribed!* Daily picks at *8AM* every morning ⚽\nUse /unsubscribe to stop.", parse_mode="Markdown")
+    await update.message.reply_text("✅ Subscribed! Daily picks at 8AM ⚽")
 
-async def unsubscribe_cmd(update, ctx):
+async def unsubscribe_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     subscribers.discard(update.effective_chat.id)
     await update.message.reply_text("❌ Unsubscribed from daily picks.")
 
-async def handle_message(update, ctx):
-    await update.message.reply_text("🤔 Analyzing...")
-    response = await ask_claude(update.message.text)
-    await update.message.reply_text(response, parse_mode="Markdown")
+async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.lower()
+    if " vs " in text:
+        home, away = text.split(" vs ", 1)
+        home = home.strip().title()
+        away = away.strip().title()
+        league = next((f["league"] for f in FIXTURES if f["home"].lower() in home.lower()), "International")
+        p = predict(home, away)
+        await update.message.reply_text(
+            f"⚽ *{home} vs {away}* | 🏆 {league}\n"
+            f"🎯 {p['result']}\n"
+            f"Over 1.5: *{p['o15']}%* | Over 2.5: *{p['o25']}%*\n"
+            f"BTTS: *{p['btts']}%*\n\n"
+            f"⚠️ _Bet responsibly._",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text(
+            "I can predict any match! Try:\n"
+            "• `/predict Liverpool vs Arsenal`\n"
+            "• Or type: `Liverpool vs Arsenal`\n"
+            "• `/picks` for today's best bets",
+            parse_mode="Markdown"
+        )
 
-async def daily_picks_job(ctx):
-    if not subscribers: return
-    msg = "🌅 *GOOD MORNING! Daily Picks* ⚽\n\n" + get_top_picks("over_15", 5) + "\n\n" + get_top_picks("btts", 3)
+async def daily_job(ctx: ContextTypes.DEFAULT_TYPE):
+    if not subscribers:
+        return
+    msg = "🌅 *Good Morning! Daily Picks* ⚽\n\n" + picks_msg("o15", "Over 1.5 Goals", 5)
     for uid in list(subscribers):
-        try: await ctx.bot.send_message(chat_id=uid, text=msg, parse_mode="Markdown")
-        except: subscribers.discard(uid)
+        try:
+            await ctx.bot.send_message(chat_id=uid, text=msg, parse_mode="Markdown")
+        except:
+            subscribers.discard(uid)
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CommandHandler("today", today_picks))
-    app.add_handler(CommandHandler("picks", picks_over15))
-    app.add_handler(CommandHandler("over25", picks_over25))
-    app.add_handler(CommandHandler("over35", picks_over35))
-    app.add_handler(CommandHandler("btts", picks_btts))
+    app.add_handler(CommandHandler("today", today_cmd))
+    app.add_handler(CommandHandler("picks", picks_cmd))
+    app.add_handler(CommandHandler("over25", over25_cmd))
+    app.add_handler(CommandHandler("over35", over35_cmd))
+    app.add_handler(CommandHandler("btts", btts_cmd))
     app.add_handler(CommandHandler("predict", predict_cmd))
-    app.add_handler(CommandHandler("leagues", leagues_cmd))
     app.add_handler(CommandHandler("subscribe", subscribe_cmd))
     app.add_handler(CommandHandler("unsubscribe", unsubscribe_cmd))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.job_queue.run_daily(daily_picks_job, time=time(hour=8, minute=0))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    app.job_queue.run_daily(daily_job, time=time(hour=8, minute=0))
     print("🤖 Sporty Predictor Bot is running...")
     app.run_polling(drop_pending_updates=True)
 
