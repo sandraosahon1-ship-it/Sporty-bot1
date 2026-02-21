@@ -93,14 +93,19 @@ BTTS No: *{100 - pred['btts']}%*
 """
 
 def get_top_picks(market="over_15", n=5):
-    scored = sorted([(predict_match(f["home"], f["away"])[market], f, predict_match(f["home"], f["away"])) for f in SAMPLE_FIXTURES], reverse=True)
-    labels = {"over_15": "⚽ Over 1.5 Goals", "over_25": "⚽ Over 2.5 Goals", "over_35": "⚽ Over 3.5 Goals", "btts": "⚡ BTTS"}
+def get_top_picks(market="over_15", n=5):
+    results = []
+    for f in SAMPLE_FIXTURES[:n]:
+        pred = predict_match(f["home"], f["away"])
+        pct = pred[market]
+        results.append(f"⚽ *{f['home']} vs {f['away']}* - {pct}%\n🏆 {f['league']} | {pred['result']}")
+    
+    labels = {"over_15": "Over 1.5 Goals", "over_25": "Over 2.5 Goals", "over_35": "Over 3.5 Goals", "btts": "BTTS"}
     label = labels.get(market, market)
-    lines = [f"🔥 *Top {n} {label} Picks*\n━━━━━━━━━━━━━━━━━━━━"]
-    for i, (pct, f, pred) in enumerate(scored[:n], 1):
-        lines.append(f"{i}. *{f['home']} vs {f['away']}*\n   🏆 {f['league']} | 📅 {f['date']}\n   {label}: *{pct}%* | {pred['result']}\n")
-    lines.append("⚠️ _Bet responsibly. 18+ only._")
-    return "\n".join(lines)
+    msg = f"🔥 *Top {n} {label} Picks*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+    msg += "\n\n".join(results)
+    msg += "\n\n⚠️ _Bet responsibly. 18+ only._"
+    return msg
 
 async def ask_claude(question):
     if not ANTHROPIC_API_KEY:
