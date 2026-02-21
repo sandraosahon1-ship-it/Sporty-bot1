@@ -60,7 +60,7 @@ def picks_msg(market, label, n=5):
     for f in FIXTURES:
         p = predict(f["home"], f["away"])
         data.append((p[market], f, p))
-    data.sort(reverse=True)
+    data.sort(key=lambda x: x[0], reverse=True)
     msg = f"🔥 *Top {label} Picks*\n━━━━━━━━━━━━━━━━━━━━\n\n"
     for i, (pct, f, p) in enumerate(data[:n], 1):
         msg += f"{i}. *{f['home']} vs {f['away']}*\n"
