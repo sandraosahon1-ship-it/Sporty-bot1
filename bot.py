@@ -137,7 +137,7 @@ async def today_picks(update, ctx):
 
 async def picks_over15(update, ctx):
     await update.message.reply_text("⏳ Getting picks...")
-    await update.message.reply_text(ge
+    await update.message.reply_text(get_top_picks("over_15", 6), parse_mode="Markdown")
 async def picks_over25(update, ctx):
     await update.message.reply_text("⏳ Getting picks...")
     await update.message.reply_text(get_top_picks("over_25", 6), parse_mode="Markdown")
