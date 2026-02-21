@@ -135,10 +135,20 @@ async def today_picks(update, ctx):
     msg += "⚠️ _Bet responsibly. 18+ only._"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-async def picks_over15(update, ctx): await update.message.reply_text(get_top_picks("over_15", 6), parse_mode="Markdown")
-async def picks_over25(update, ctx): await update.message.reply_text(get_top_picks("over_25", 6), parse_mode="Markdown")
-async def picks_over35(update, ctx): await update.message.reply_text(get_top_picks("over_35", 6), parse_mode="Markdown")
-async def picks_btts(update, ctx): await update.message.reply_text(get_top_picks("btts", 6), parse_mode="Markdown")
+async def picks_over15(update, ctx):
+    await update.message.reply_text("⏳ Getting picks...")
+    await update.message.reply_text(ge
+async def picks_over25(update, ctx):
+    await update.message.reply_text("⏳ Getting picks...")
+    await update.message.reply_text(get_top_picks("over_25", 6), parse_mode="Markdown")
+
+async def picks_over35(update, ctx):
+    await update.message.reply_text("⏳ Getting picks...")
+    await update.message.reply_text(get_top_picks("over_35", 6), parse_mode="Markdown")
+
+async def picks_btts(update, ctx):
+    await update.message.reply_text("⏳ Getting picks...")
+    await update.message.reply_text(get_top_picks("btts", 6), parse_mode="Markdown")
 
 async def predict_cmd(update, ctx):
     text = update.message.text.replace("/predict", "").strip()
